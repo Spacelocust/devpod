@@ -1,0 +1,19 @@
+{
+  "name": "(prefix)-strapi",
+  "dockerComposeFile": "../compose-devpod.yml",
+  "service": "strapi",
+  "runServices": ["strapi"],
+  "workspaceFolder": "/opt/app",
+  "shutdownAction": "stopCompose",
+  "features": {
+    "ghcr.io/cirolosapio/devcontainers-features/alpine-ohmyzsh:0": {}
+  },
+  "settings": {
+    "terminal.integrated.defaultProfile.linux": "zsh",
+    "terminal.integrated.profiles.linux": {
+      "zsh": {
+        "path": "/usr/bin/zsh"
+      }
+    }
+  }
+}
