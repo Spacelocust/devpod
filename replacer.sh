@@ -1,41 +1,28 @@
 #!/usr/bin/env sh
+set -eu
 
-# Exit on error
-set -e
-
-# Usage function
 usage() {
-    echo "Usage: $0 -f <file> [-p <placeholder> -v <value>]... [-o <output>]"
-    echo ""
-    echo "Options:"
-    echo "  -f    Input file to process (required)"
-    echo "  -p    Placeholder to replace (can be used multiple times)"
-    echo "  -v    Value to replace with (must follow each -p)"
-    echo "  -o    Output file (optional, defaults to overwriting input file)"
-    echo ""
-    echo "Examples:"
-    echo "  # Single replacement"
-    echo "  $0 -f docker-compose.yml -p '{{container-prefix}}' -v 'myapp'"
-    echo ""
-    echo "  # Multiple replacements"
-    echo "  $0 -f docker-compose.yml \\"
-    echo "    -p '{{container-prefix}}' -v 'myapp' \\"
-    echo "    -p '{{network-name}}' -v 'production'"
-    echo ""
-    echo "  # With output file"
-    echo "  $0 -f template.yml \\"
-    echo "    -p '{{prefix}}' -v 'app' \\"
-    echo "    -p '{{env}}' -v 'prod' \\"
-    echo "    -o docker-compose.prod.yml"
+    cat <<EOF
+Usage: $0 -f <file> [-p <placeholder> -v <value>]... [-o <output>]
+
+Options:
+  -f    Input file (required)
+  -p    Placeholder (can be used multiple times)
+  -v    Value (must follow each -p)
+  -o    Output file (optional; defaults to overwriting input)
+  -h    Show this help
+EOF
     exit 1
 }
 
+# -------------------------
 # Parse arguments
+# -------------------------
 FILE=""
 OUTPUT=""
-SHOW_HELP=false
-REPLACEMENTS=""
 LAST_PLACEHOLDER=""
+PLACEHOLDERS=""
+VALUES=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -44,23 +31,16 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         -p)
-            if [ -n "$LAST_PLACEHOLDER" ]; then
-                echo "Error: Placeholder '$LAST_PLACEHOLDER' has no corresponding value"
-                echo "Each -p must be followed by -v"
-                usage
-            fi
+            [ -z "$LAST_PLACEHOLDER" ] || { echo "Error: -p '$LAST_PLACEHOLDER' missing -v" >&2; exit 1; }
             LAST_PLACEHOLDER="$2"
             shift 2
             ;;
         -v)
-            if [ -z "$LAST_PLACEHOLDER" ]; then
-                echo "Error: Value provided without placeholder"
-                echo "Each -v must be preceded by -p"
-                usage
-            fi
-            # Store placeholder=value pair
-            REPLACEMENTS="$REPLACEMENTS$LAST_PLACEHOLDER|||$2
-"
+            [ -n "$LAST_PLACEHOLDER" ] || { echo "Error: -v without preceding -p" >&2; exit 1; }
+            PLACEHOLDERS="$PLACEHOLDERS
+$LAST_PLACEHOLDER"
+            VALUES="$VALUES
+$2"
             LAST_PLACEHOLDER=""
             shift 2
             ;;
@@ -69,70 +49,43 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         -h)
-            SHOW_HELP=true
-            shift
+            usage
             ;;
         *)
-            echo "Error: Unknown option '$1'"
+            echo "Unknown option: $1" >&2
             usage
             ;;
     esac
 done
 
-# Show help if requested or no arguments provided
-if [ "$SHOW_HELP" = true ]; then
-    usage
-fi
+# Validation
+[ -n "$FILE" ] || { echo "Error: -f is required" >&2; usage; }
+[ -f "$FILE" ] || { echo "Error: File not found: $FILE" >&2; exit 1; }
 
-# Check for unpaired placeholder
-if [ -n "$LAST_PLACEHOLDER" ]; then
-    echo "Error: Placeholder '$LAST_PLACEHOLDER' has no corresponding value"
-    usage
-fi
+[ -n "$PLACEHOLDERS" ] || { echo "Error: At least one -p/-v pair is required" >&2; exit 1; }
+[ -z "$LAST_PLACEHOLDER" ] || { echo "Error: -p '$LAST_PLACEHOLDER' missing -v" >&2; exit 1; }
 
-# Validate required arguments
-if [ -z "$FILE" ]; then
-    echo "Error: Input file (-f) is required"
-    usage
-fi
+[ -z "$OUTPUT" ] && OUTPUT="$FILE"
 
-if [ -z "$REPLACEMENTS" ]; then
-    echo "Error: At least one placeholder-value pair (-p/-v) is required"
-    usage
-fi
+# -------------------------
+# Apply replacements
+# -------------------------
+TMP="$(mktemp "${OUTPUT}.XXXX")"
+trap 'rm -f "$TMP"' EXIT
 
-# Check if file exists
-if [ ! -f "$FILE" ]; then
-    echo "Error: File '$FILE' not found"
-    exit 1
-fi
+cp "$FILE" "$TMP"
 
-# Set output file (default to input file)
-if [ -z "$OUTPUT" ]; then
-    OUTPUT="$FILE"
-fi
-
-# Create temp file
-TEMP_FILE="$OUTPUT.tmp"
-cp "$FILE" "$TEMP_FILE"
-
-# Process each replacement
-echo "Processing replacements in $FILE..."
-echo "$REPLACEMENTS" | while IFS='|||' read -r placeholder value; do
-    if [ -n "$placeholder" ] && [ -n "$value" ]; then
-        echo "  Replacing '$placeholder' with '$value'"
-
-        # Escape special characters for sed
-        ESCAPED_PLACEHOLDER=$(echo "$placeholder" | sed 's/[]\/$*.^[]/\\&/g')
-        ESCAPED_VALUE=$(echo "$value" | sed 's/[\/&]/\\&/g')
-
-        # Perform replacement
-        sed "s/$ESCAPED_PLACEHOLDER/$ESCAPED_VALUE/g" "$TEMP_FILE" > "$TEMP_FILE.new"
-        mv "$TEMP_FILE.new" "$TEMP_FILE"
-    fi
+# Loop over placeholder/value lists
+# Convert multi-line variables to iterators
+echo "$PLACEHOLDERS" | sed '/^$/d' | while IFS= read -r ph; do
+    # get corresponding value
+    value=$(echo "$VALUES" | sed '/^$/d' | sed -n "$(expr $(echo "$PLACEHOLDERS" | sed '/^$/d' | grep -n -F "$ph" | cut -d: -f1) )p")
+    # Escape sed delimiter | in value
+    esc_value=$(printf '%s' "$value" | sed 's/|/\\|/g')
+    # Apply literal replacement
+    sed "s|$ph|$esc_value|g" "$TMP" > "$TMP.new" && mv "$TMP.new" "$TMP"
 done
 
-# Move temp file to output
-mv "$TEMP_FILE" "$OUTPUT"
+mv "$TMP" "$OUTPUT"
 
-echo "✓ All replacements complete: $OUTPUT"
+echo "✓ Replacements complete: $OUTPUT"
