@@ -16,10 +16,14 @@ TEMP_DIR=""
 
 # Cleanup function
 cleanup() {
+    exit_code=$?
     if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        echo ""
         echo "Cleaning up temporary files..."
         rm -rf "$TEMP_DIR"
+        echo "✓ Cleanup complete"
     fi
+    exit $exit_code
 }
 
 # Usage function
@@ -44,9 +48,15 @@ download_file() {
 
     echo "  Downloading $remote_path..."
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$url" -o "$local_path" 2>/dev/null || return 1
+        curl -fsSL "$url" -o "$local_path" 2>/dev/null || {
+            echo "Error: Failed to download $remote_path"
+            return 1
+        }
     elif command -v wget >/dev/null 2>&1; then
-        wget -q "$url" -O "$local_path" 2>/dev/null || return 1
+        wget -q "$url" -O "$local_path" 2>/dev/null || {
+            echo "Error: Failed to download $remote_path"
+            return 1
+        }
     else
         echo "Error: Neither curl nor wget found. Please install one of them."
         exit 1
@@ -125,13 +135,13 @@ TEMP_DIR=$(mktemp -d)
 echo "Created temporary directory: $TEMP_DIR"
 echo ""
 
-# Download replace-vars.sh script
+# Download replacer.sh script
 echo "Downloading replacer script..."
-download_file "replace-vars.sh" "$TEMP_DIR/replace-vars.sh" || {
-    echo "Error: Failed to download replace-vars.sh"
+download_file "replacer.sh" "$TEMP_DIR/replacer.sh" || {
+    echo "Error: Failed to download replacer.sh"
     exit 1
 }
-chmod +x "$TEMP_DIR/replace-vars.sh"
+chmod +x "$TEMP_DIR/replacer.sh"
 
 # Download template files
 echo "Downloading template files..."
@@ -188,7 +198,7 @@ fi
 # Process compose.yml if exists
 if [ -f "$TEMP_DIR/compose.yml" ]; then
     echo "Processing compose.yml..."
-    "$TEMP_DIR/replace-vars.sh" -f "$TEMP_DIR/compose.yml" \
+    "$TEMP_DIR/replacer.sh" -f "$TEMP_DIR/compose.yml" \
         -p '(prefix)' -v "$PREFIX" \
         -o "./compose-devpod.yml"
     echo "✓ Created compose-devpod.yml"
@@ -197,7 +207,7 @@ fi
 # Process Makefile if exists
 if [ -f "$TEMP_DIR/Makefile.template" ]; then
     echo "Processing Makefile..."
-    "$TEMP_DIR/replace-vars.sh" -f "$TEMP_DIR/Makefile.template" \
+    "$TEMP_DIR/replacer.sh" -f "$TEMP_DIR/Makefile.template" \
         -p '(prefix)' -v "$PREFIX" \
         -o "./Makefile"
     echo "✓ Created Makefile"
